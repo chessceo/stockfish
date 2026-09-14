@@ -1,7 +1,7 @@
-# chess.ceo Stockfish WebAssembly build
+# chess.ceo Stockfish builds
 
-This is the source for the modified Stockfish WebAssembly build chess.ceo
-ships in its browser engine (referenced from the app's credits page). It is
+This is the source for the modified Stockfish builds chess.ceo ships in its
+browser engine and mobile app (referenced from the app's credits page). It is
 a [GPL-3.0](LICENSE) derivative of
 [official-stockfish/Stockfish](https://github.com/official-stockfish/Stockfish).
 
@@ -18,6 +18,11 @@ Contents:
   compiled module to the classic postMessage/UCI worker protocol our app
   speaks. Derived from lichess-org/stockfish-web's GPL-3.0 browser glue.
 - `build-wasm.mjs` / `test-wasm.mjs` — the build and smoke-test scripts.
+- `android/` — the native ARM64 build for the Flutter mobile app: a universal
+  `libstockfish.so` (armv8 + armv8-dotprod, runtime CPU dispatch, one shared
+  NNUE net) built from a patched Stockfish source tree (PIE→PIC for shared-lib
+  linking, `#embed`→incbin for NDK Clang compatibility) plus a small Dart-FFI
+  glue layer.
 
 **Reproducing the exact build:** the patches apply to Stockfish 17.1 and 18
 source checked out locally as `~/Stockfish-17` / `~/Stockfish-18` when this
