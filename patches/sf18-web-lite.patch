@@ -1,0 +1,108 @@
+diff --git a/src/evaluate.h b/src/evaluate.h
+--- a/src/evaluate.h
++++ b/src/evaluate.h
+@@ -30,12 +30,19 @@
+ namespace Eval {
+ 
++#if defined(STOCKFISH_WEB_LITE_NET)
++#define EvalFileDefaultNameBig "nn-9067e33176e8.nnue"
++#define EvalFileDefaultNameSmall ""
++#else
++
+ // The default net name MUST follow the format nn-[SHA256 first 12 digits].nnue
+ // for the build process (profile-build and fishtest) to work. Do not change the
+ // name of the macro or the location where this macro is defined, as it is used
+ // in the Makefile/Fishtest.
+ #define EvalFileDefaultNameBig "nn-c288c895ea92.nnue"
+ #define EvalFileDefaultNameSmall "nn-37f18f62d772.nnue"
+ 
++#endif
++
+ namespace NNUE {
+ struct Networks;
+ struct AccumulatorCaches;
+diff --git a/src/nnue/nnue_architecture.h b/src/nnue/nnue_architecture.h
+--- a/src/nnue/nnue_architecture.h
++++ b/src/nnue/nnue_architecture.h
+@@ -39,7 +39,11 @@ using ThreatFeatureSet = Features::FullThreats;
+ using PSQFeatureSet    = Features::HalfKAv2_hm;
+ 
+ // Number of input feature dimensions after conversion
++#if defined(STOCKFISH_WEB_LITE_NET)
++constexpr IndexType TransformedFeatureDimensionsBig = 256;
++#else
+ constexpr IndexType TransformedFeatureDimensionsBig = 1024;
++#endif
+ constexpr int       L2Big                           = 15;
+ constexpr int       L3Big                           = 32;
+ 
+diff --git a/src/nnue/nnue_feature_transformer.h b/src/nnue/nnue_feature_transformer.h
+--- a/src/nnue/nnue_feature_transformer.h
++++ b/src/nnue/nnue_feature_transformer.h
+@@ -80,8 +80,12 @@ inline void unscrambleWeights(std::array<WeightType, TotalSize>& data) {
+ // Input feature converter
+ template<IndexType TransformedFeatureDimensions>
+ class FeatureTransformer {
++#if defined(STOCKFISH_WEB_LITE_NET)
++    static constexpr bool UseThreats = false;
++#else
+     static constexpr bool UseThreats =
+       (TransformedFeatureDimensions == TransformedFeatureDimensionsBig);
++#endif
+     // Number of output dimensions for one side
+     static constexpr IndexType HalfDimensions = TransformedFeatureDimensions;
+ 
+diff --git a/src/nnue/nnue_accumulator.cpp b/src/nnue/nnue_accumulator.cpp
+--- a/src/nnue/nnue_accumulator.cpp
++++ b/src/nnue/nnue_accumulator.cpp
+@@ -141,7 +141,11 @@ template<IndexType Dimensions>
+ void AccumulatorStack::evaluate(const Position&                       pos,
+                                 const FeatureTransformer<Dimensions>& featureTransformer,
+                                 AccumulatorCaches::Cache<Dimensions>& cache) noexcept {
++#if defined(STOCKFISH_WEB_LITE_NET)
++    constexpr bool UseThreats = false;
++#else
+     constexpr bool UseThreats = (Dimensions == TransformedFeatureDimensionsBig);
++#endif
+ 
+     evaluate_side<PSQFeatureSet>(WHITE, pos, featureTransformer, cache);
+ 
+diff --git a/src/evaluate.cpp b/src/evaluate.cpp
+--- a/src/evaluate.cpp
++++ b/src/evaluate.cpp
+@@ -49,4 +49,11 @@
+-bool Eval::use_smallnet(const Position& pos) { return std::abs(simple_eval(pos)) > 962; }
++#if defined(STOCKFISH_WEB_LITE_NET)
++bool Eval::use_smallnet(const Position& pos) {
++    (void) pos;
++    return false;
++}
++#else
++bool Eval::use_smallnet(const Position& pos) { return std::abs(simple_eval(pos)) > 962; }
++#endif
+ 
+ // Evaluate is the evaluator for the outer world. It returns a static evaluation
+ // of the position from the point of view of the side to move.
+diff --git a/src/engine.cpp b/src/engine.cpp
+--- a/src/engine.cpp
++++ b/src/engine.cpp
+@@ -262,6 +262,8 @@
+ void Engine::verify_networks() const {
+     networks->big.verify(options["EvalFile"], onVerifyNetworks);
++#if !defined(STOCKFISH_WEB_LITE_NET)
+     networks->small.verify(options["EvalFileSmall"], onVerifyNetworks);
++#endif
+ 
+     auto statuses = networks.get_status_and_errors();
+     for (size_t i = 0; i < statuses.size(); ++i)
+@@ -297,8 +299,10 @@
+ void Engine::load_networks() {
+     networks.modify_and_replicate([this](NN::Networks& networks_) {
+         networks_.big.load(binaryDirectory, options["EvalFile"]);
++#if !defined(STOCKFISH_WEB_LITE_NET)
+         networks_.small.load(binaryDirectory, options["EvalFileSmall"]);
++#endif
+     });
+     threads.clear();
+     threads.ensure_network_replicated();
+ }
