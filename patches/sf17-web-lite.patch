@@ -1,0 +1,81 @@
+diff --git a/src/evaluate.h b/src/evaluate.h
+--- a/src/evaluate.h
++++ b/src/evaluate.h
+@@ -30,12 +30,19 @@
+ namespace Eval {
+ 
++#if defined(STOCKFISH_WEB_LITE_NET)
++#define EvalFileDefaultNameBig "nn-9067e33176e8.nnue"
++#define EvalFileDefaultNameSmall ""
++#else
++
+ // The default net name MUST follow the format nn-[SHA256 first 12 digits].nnue
+ // for the build process (profile-build and fishtest) to work. Do not change the
+ // name of the macro or the location where this macro is defined, as it is used
+ // in the Makefile/Fishtest.
+ #define EvalFileDefaultNameBig "nn-1111cefa1111.nnue"
+ #define EvalFileDefaultNameSmall "nn-37f18f62d772.nnue"
+ 
++#endif
++
+ namespace NNUE {
+ struct Networks;
+ struct AccumulatorCaches;
+diff --git a/src/nnue/nnue_architecture.h b/src/nnue/nnue_architecture.h
+--- a/src/nnue/nnue_architecture.h
++++ b/src/nnue/nnue_architecture.h
+@@ -38,7 +38,11 @@ using FeatureSet = Features::HalfKAv2_hm;
+ 
+ // Number of input feature dimensions after conversion
++#if defined(STOCKFISH_WEB_LITE_NET)
++constexpr IndexType TransformedFeatureDimensionsBig = 256;
++#else
+ constexpr IndexType TransformedFeatureDimensionsBig = 3072;
++#endif
+ constexpr int       L2Big                           = 15;
+ constexpr int       L3Big                           = 32;
+ 
+diff --git a/src/evaluate.cpp b/src/evaluate.cpp
+--- a/src/evaluate.cpp
++++ b/src/evaluate.cpp
+@@ -48,8 +48,15 @@
+-bool Eval::use_smallnet(const Position& pos) {
+-    int simpleEval = simple_eval(pos, pos.side_to_move());
+-    return std::abs(simpleEval) > 962;
+-}
++#if defined(STOCKFISH_WEB_LITE_NET)
++bool Eval::use_smallnet(const Position& pos) {
++    (void) pos;
++    return false;
++}
++#else
++bool Eval::use_smallnet(const Position& pos) {
++    int simpleEval = simple_eval(pos, pos.side_to_move());
++    return std::abs(simpleEval) > 962;
++}
++#endif
+ 
+ // Evaluate is the evaluator for the outer world. It returns a static evaluation
+ // of the position from the point of view of the side to move.
+ Value Eval::evaluate(const Eval::NNUE::Networks&    networks,
+diff --git a/src/engine.cpp b/src/engine.cpp
+--- a/src/engine.cpp
++++ b/src/engine.cpp
+@@ -228,13 +228,17 @@
+ void Engine::verify_networks() const {
+     networks->big.verify(options["EvalFile"]);
++#if !defined(STOCKFISH_WEB_LITE_NET)
+     networks->small.verify(options["EvalFileSmall"]);
++#endif
+ }
+ 
+ void Engine::load_networks() {
+     networks.modify_and_replicate([this](NN::Networks& networks_) {
+         networks_.big.load(binaryDirectory, options["EvalFile"]);
++#if !defined(STOCKFISH_WEB_LITE_NET)
+         networks_.small.load(binaryDirectory, options["EvalFileSmall"]);
++#endif
+     });
+     threads.clear();
+     threads.ensure_network_replicated();
+ }

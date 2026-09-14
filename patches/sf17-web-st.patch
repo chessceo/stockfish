@@ -1,0 +1,256 @@
+diff --git a/src/main.cpp b/src/main.cpp
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -39,12 +39,7 @@ int main(int argc, char* argv[]) {
+     char* browserArgv[] = {const_cast<char*>("stockfish"), nullptr};
+     uci_global          = new UCIEngine(1, browserArgv);
+
+     Tune::init(uci_global->engine_options());
+
+-    uci_global->loop();
+-
+-    delete uci_global;
+-    uci_global = nullptr;
+-
+     return 0;
+ }
+diff --git a/src/uci.cpp b/src/uci.cpp
+--- a/src/uci.cpp
++++ b/src/uci.cpp
+@@ -83,16 +83,20 @@ void UCIEngine::init_search_update_listeners() {
+ }
+ 
+ void UCIEngine::loop() {
+-    std::string token, cmd;
++    std::string cmd;
+ 
+     for (int i = 1; i < cli.argc; ++i)
+         cmd += std::string(cli.argv[i]) + " ";
+ 
+     do
+     {
+         cmd = js_getline();
++    } while (command(cmd) && cli.argc == 1);  // The command-line arguments are one-shot
++}
+ 
+-        std::istringstream is(cmd);
++bool UCIEngine::command(std::string cmd) {
++        std::string token;
++        std::istringstream is(cmd);
+ 
+         token.clear();  // Avoid a stale if getline() returns nothing or a blank line
+         is >> std::skipws >> token;
+@@ -166,7 +170,7 @@ void UCIEngine::loop() {
+             sync_cout << "Unknown command: '" << cmd << "'. Type help for more information."
+                       << sync_endl;
+ 
+-    } while (token != "quit" && cli.argc == 1);  // The command-line arguments are one-shot
++    return token != "quit";
+ }
+ 
+ Search::LimitsType UCIEngine::parse_limits(std::istream& is) {
+diff --git a/src/uci.h b/src/uci.h
+--- a/src/uci.h
++++ b/src/uci.h
+@@ -41,6 +41,7 @@ class UCIEngine {
+     UCIEngine(int argc, char** argv);
+ 
+     void loop();
++    bool command(std::string cmd);
+ 
+     static int         to_cp(Value v, const Position& pos);
+     static std::string format_score(const Score& s);
+diff --git a/src/engine.cpp b/src/engine.cpp
+--- a/src/engine.cpp
++++ b/src/engine.cpp
+@@ -68,12 +68,18 @@ Engine::Engine(std::optional<std::string> path) :
+         return numa_config_information_as_string() + "\n" + thread_binding_information_as_string();
+     });
+ 
++#if defined(STOCKFISH_WEB_SINGLE_THREADED) || defined(__EMSCRIPTEN_SINGLE_THREADED__)
++    options["Threads"] << Option(1, 1, 1);
++#else
+     options["Threads"] << Option(1, 1, 1024, [this](const Option&) {
+         resize_threads();
+         return thread_binding_information_as_string();
+     });
++#endif
+ 
+     options["Hash"] << Option(16, 1, MaxHashMB, [this](const Option& o) {
+         set_tt_size(o);
+diff --git a/src/thread_win32_osx.h b/src/thread_win32_osx.h
+--- a/src/thread_win32_osx.h
++++ b/src/thread_win32_osx.h
+@@ -27,7 +27,20 @@
+ // The implementation calls pthread_create() with the stack size parameter
+ // equal to the Linux 8MB default, on platforms that support it.
+ 
+-#if defined(__APPLE__) || defined(__MINGW32__) || defined(__MINGW64__) || defined(USE_PTHREADS)
++#if defined(STOCKFISH_WEB_SINGLE_THREADED) || defined(__EMSCRIPTEN_SINGLE_THREADED__)
++
++namespace Stockfish {
++
++class NativeThread {
++   public:
++    template<class Function, class... Args>
++    explicit NativeThread(Function&&, Args&&...) {}
++
++    void join() {}
++};
++
++}  // namespace Stockfish
++
++#elif defined(__APPLE__) || defined(__MINGW32__) || defined(__MINGW64__) || defined(USE_PTHREADS)
+ 
+     #include <pthread.h>
+     #include <functional>
+diff --git a/src/thread.cpp b/src/thread.cpp
+--- a/src/thread.cpp
++++ b/src/thread.cpp
+@@ -59,9 +59,11 @@ Thread::~Thread() {
+     assert(!searching);
+ 
+     exit = true;
++#if !defined(STOCKFISH_WEB_SINGLE_THREADED) && !defined(__EMSCRIPTEN_SINGLE_THREADED__)
+     start_searching();
+     stdThread.join();
++#endif
+ }
+ 
+ // Wakes up the thread that will start the search
+@@ -82,18 +84,24 @@ void Thread::clear_worker() {
+ // Blocks on the condition variable until the thread has finished searching
+ void Thread::wait_for_search_finished() {
+ 
++#if !defined(STOCKFISH_WEB_SINGLE_THREADED) && !defined(__EMSCRIPTEN_SINGLE_THREADED__)
+     std::unique_lock<std::mutex> lk(mutex);
+     cv.wait(lk, [&] { return !searching; });
++#endif
+ }
+ 
+ // Launching a function in the thread
+ void Thread::run_custom_job(std::function<void()> f) {
++#if defined(STOCKFISH_WEB_SINGLE_THREADED) || defined(__EMSCRIPTEN_SINGLE_THREADED__)
++    f();
++#else
+     {
+         std::unique_lock<std::mutex> lk(mutex);
+         cv.wait(lk, [&] { return !searching; });
+         jobFunc   = std::move(f);
+         searching = true;
+     }
+     cv.notify_one();
++#endif
+ }
+ 
+ void Thread::ensure_network_replicated() { worker->ensure_network_replicated(); }
+diff --git a/src/search.cpp b/src/search.cpp
+--- a/src/search.cpp
++++ b/src/search.cpp
+@@ -43,6 +43,10 @@
+ #include "uci.h"
+ #include "ucioption.h"
+ 
++#if defined(STOCKFISH_WEB_SINGLE_THREADED) || defined(__EMSCRIPTEN_SINGLE_THREADED__)
++    #include <emscripten.h>
++#endif
++
+ namespace Stockfish {
+ 
+ namespace TB = Tablebases;
+@@ -57,6 +61,10 @@ using Eval::evaluate;
+ using namespace Search;
+ 
+ namespace {
+ 
++#if defined(STOCKFISH_WEB_SINGLE_THREADED) || defined(__EMSCRIPTEN_SINGLE_THREADED__)
++TimePoint lastElapsed;
++#endif
++
+ // Futility margin
+ Value futility_margin(Depth d, bool noTtCutNode, bool improving, bool oppWorsening) {
+     Value futilityMult       = 122 - 37 * noTtCutNode;
+@@ -136,6 +144,10 @@ void Search::Worker::ensure_network_replicated() {
+ 
+ void Search::Worker::start_searching() {
+ 
++#if defined(STOCKFISH_WEB_SINGLE_THREADED) || defined(__EMSCRIPTEN_SINGLE_THREADED__)
++    lastElapsed = 0;
++#endif
++
+     // Non-main threads go directly to iterative_deepening()
+     if (!is_mainthread())
+     {
+@@ -166,8 +178,14 @@ void Search::Worker::start_searching() {
+     // the UCI protocol states that we shouldn't print the best move before the
+     // GUI sends a "stop" or "ponderhit" command. We therefore simply wait here
+     // until the GUI sends one of those commands.
++#if defined(STOCKFISH_WEB_SINGLE_THREADED) || defined(__EMSCRIPTEN_SINGLE_THREADED__)
++    while (!threads.stop && (main_manager()->ponder || limits.infinite))
++        emscripten_sleep(0);
++#else
+     while (!threads.stop && (main_manager()->ponder || limits.infinite))
+     {}  // Busy wait for a stop or a ponder reset
++#endif
+ 
+     // Stop the threads if not already stopped (also raise the stop if
+     // "ponderhit" just reset threads.ponder)
+@@ -1868,6 +1886,13 @@ void SearchManager::check_time(Search::Worker& worker) {
+     TimePoint elapsed = tm.elapsed([&worker]() { return worker.threads.nodes_searched(); });
+     TimePoint tick    = worker.limits.startTime + elapsed;
+ 
++#if defined(STOCKFISH_WEB_SINGLE_THREADED) || defined(__EMSCRIPTEN_SINGLE_THREADED__)
++    if (elapsed - lastElapsed >= 45) {
++        lastElapsed = elapsed;
++        emscripten_sleep(0);
++    }
++#endif
++
+     if (tick - lastInfoTime >= 1000)
+     {
+         lastInfoTime = tick;
+diff --git a/src/uci.cpp b/src/uci.cpp
+--- a/src/uci.cpp
++++ b/src/uci.cpp
+@@ -84,6 +84,10 @@ void UCIEngine::loop() {
+         cmd = js_getline();
+     } while (command(cmd) && cli.argc == 1);  // The command-line arguments are one-shot
+ }
+ 
++#if defined(STOCKFISH_WEB_SINGLE_THREADED) || defined(__EMSCRIPTEN_SINGLE_THREADED__)
++bool searching = false;
++#endif
++
+ bool UCIEngine::command(std::string cmd) {
+         std::string token;
+         std::istringstream is(cmd);
+@@ -216,8 +220,12 @@ void UCIEngine::go(std::istringstream& is) {
+ 
+     if (limits.perft)
+         perft(limits);
+-    else
++    else {
++#if defined(STOCKFISH_WEB_SINGLE_THREADED) || defined(__EMSCRIPTEN_SINGLE_THREADED__)
++        searching = true;
++#endif
+         engine.go(limits);
++    }
+ }
+ 
+ void UCIEngine::bench(std::istream& args) {
+@@ -491,6 +499,14 @@ void UCIEngine::on_bestmove(std::string_view bestmove, std::string_view ponder)
+     if (!ponder.empty())
+         std::cout << " ponder " << ponder;
+     std::cout << sync_endl;
++#if defined(STOCKFISH_WEB_SINGLE_THREADED) || defined(__EMSCRIPTEN_SINGLE_THREADED__)
++    searching = false;
++#endif
++}
++
++#if defined(STOCKFISH_WEB_SINGLE_THREADED) || defined(__EMSCRIPTEN_SINGLE_THREADED__)
++extern "C" bool isSearching() {
++    return searching;
+ }
++#endif
+ 
+ }  // namespace Stockfish
