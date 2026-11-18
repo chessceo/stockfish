@@ -9,9 +9,11 @@ the mobile app. A [GPL-3.0](LICENSE) derivative of
 | `patches/` | Diffs against Stockfish 17.1 and 18 for the browser: external NNUE loading, no native filesystem or network verification at startup, a single-threaded Asyncify variant, and a small-net "lite" build. |
 | `glue/` | Emscripten C++ glue and JS loader that expose the module as a postMessage/UCI worker. Derived from [lichess-org/stockfish-web](https://github.com/lichess-org/stockfish-web) (GPL-3.0). |
 | `build-wasm.mjs`, `test-wasm.mjs` | Build and smoke test. |
+| `sf19/` | Worker adapters for Stockfish 19, and which lichess-org/stockfish-web release its modules come from. See [`sf19/README.md`](sf19/README.md). |
 | `android/` | ARM64 `libstockfish.so` for the mobile app: armv8 and armv8-dotprod in one library, runtime CPU dispatch, one shared NNUE. See [`android/README.md`](android/README.md). |
 
-Stockfish 19 is built from lichess-org/stockfish-web, not from these patches.
+Stockfish 19 is not built here: the app ships the prebuilt modules from
+lichess-org/stockfish-web 0.5.0, unchanged.
 
 **Upstream commits are not pinned.** The patches were made against local
 checkouts of 17.1 and 18. The worker file names in the app
