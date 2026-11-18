@@ -1,36 +1,22 @@
 # chess.ceo Stockfish builds
 
-This is the source for the modified Stockfish builds chess.ceo ships in its
-browser engine and mobile app (referenced from the app's credits page). It is
-a [GPL-3.0](LICENSE) derivative of
+Source for the modified Stockfish that chess.ceo ships in the browser and in
+the mobile app. A [GPL-3.0](LICENSE) derivative of
 [official-stockfish/Stockfish](https://github.com/official-stockfish/Stockfish).
 
-Contents:
+| Path | Contents |
+|---|---|
+| `patches/` | Diffs against Stockfish 17.1 and 18 for the browser: external NNUE loading, no native filesystem or network verification at startup, a single-threaded Asyncify variant, and a small-net "lite" build. |
+| `glue/` | Emscripten C++ glue and JS loader that expose the module as a postMessage/UCI worker. Derived from [lichess-org/stockfish-web](https://github.com/lichess-org/stockfish-web) (GPL-3.0). |
+| `build-wasm.mjs`, `test-wasm.mjs` | Build and smoke test. |
+| `android/` | ARM64 `libstockfish.so` for the mobile app: armv8 and armv8-dotprod in one library, runtime CPU dispatch, one shared NNUE. See [`android/README.md`](android/README.md). |
 
-- `patches/` — our changes as diffs against upstream Stockfish 17.1 and 18
-  source (browser/Emscripten adaptation: external NNUE loading, disabling
-  native filesystem/network-verification assumptions that don't hold in a
-  browser, a single-threaded/Asyncify variant, and the small-net "lite"
-  build). Stockfish 19 is built from
-  [lichess-org/stockfish-web](https://github.com/lichess-org/stockfish-web)
-  (also GPL-3.0) rather than our own patch set.
-- `glue/` — the Emscripten C++ glue and JS runtime loader that bridges the
-  compiled module to the classic postMessage/UCI worker protocol our app
-  speaks. Derived from lichess-org/stockfish-web's GPL-3.0 browser glue.
-- `build-wasm.mjs` / `test-wasm.mjs` — the build and smoke-test scripts.
-- `android/` — the native ARM64 build for the Flutter mobile app: a universal
-  `libstockfish.so` (armv8 + armv8-dotprod, runtime CPU dispatch, one shared
-  NNUE net) built from a patched Stockfish source tree (PIE→PIC for shared-lib
-  linking, `#embed`→incbin for NDK Clang compatibility) plus a small Dart-FFI
-  glue layer.
+Stockfish 19 is built from lichess-org/stockfish-web, not from these patches.
 
-**Reproducing the exact build:** the patches apply to Stockfish 17.1 and 18
-source checked out locally as `~/Stockfish-17` / `~/Stockfish-18` when this
-was built; the exact commit isn't recorded here yet. Filenames elsewhere in
-chess.ceo's app (e.g. `stockfish-17.1-single-a496a04.js`,
-`stockfish-17.1-lite-single-03e3232.js`) embed what look like the intended
-upstream commit hashes (`a496a04`, `03e3232`) — treat those as a starting
-point, not a verified pin, until confirmed against upstream history.
+**Upstream commits are not pinned.** The patches were made against local
+checkouts of 17.1 and 18. The worker file names in the app
+(`stockfish-17.1-single-a496a04.js`, `stockfish-17.1-lite-single-03e3232.js`)
+point to `a496a04` and `03e3232`, but that has not been verified.
 
 ## Build
 
@@ -38,77 +24,49 @@ point, not a verified pin, until confirmed against upstream history.
 node build-wasm.mjs all
 ```
 
-Defaults:
-
-- SF17 source: `~/Stockfish-17`
-- SF18 source: `~/Stockfish-18`
-- build folder: `/tmp/chessceo-stockfish-wasm-build`
-- output folder: `/tmp/chessceo-stockfish-wasm-output`
-- threading: `mt`
-- weight: `full`
-
-Use local Emscripten. If it is not in `~/emsdk`, set:
+| Setting | Default |
+|---|---|
+| SF17 source | `~/Stockfish-17` |
+| SF18 source | `~/Stockfish-18` |
+| Build folder | `/tmp/chessceo-stockfish-wasm-build` |
+| Output folder | `/tmp/chessceo-stockfish-wasm-output` |
+| Emscripten | `~/emsdk`, or set `EMSDK_ROOT` |
+| `--threading mt\|st\|both` | `mt` |
+| `--weight full\|lite\|both` | `full` |
 
 ```bash
 EMSDK_ROOT=/path/to/emsdk node build-wasm.mjs sf18
 ```
 
-Use `--threading st` to build the no-pthread variant, or `--threading both` to
-build both variants.
+**Lite** uses `nn-9067e33176e8.nnue` as the only net and disables Stockfish's
+small-net fallback. For SF17 and SF18 the patch also changes the big-network
+architecture to the 256-dimension layout that net expects. Changing only the
+default NNUE file name compiles, but Stockfish rejects the net when analysis
+starts.
 
-Use `--weight lite` to build the small-network variant, or `--weight both` to
-build both full and lite variants. The lite build uses
-`nn-9067e33176e8.nnue` as the only NNUE and disables the small-net fallback in
-Stockfish itself. For SF17/SF18 this is a real lite build: the patch also
-changes the big network architecture to the 256-dimension layout expected by
-that NNUE. Only changing the default NNUE filename will compile, but Stockfish
-will reject the net when analysis starts.
-
-The ST build follows the nmrugg `stockfish.js` browser flags: pthreads are
-disabled, `__EMSCRIPTEN_SINGLE_THREADED__` is defined, Asyncify is enabled, and
-the UCI bridge functions are exported explicitly. Those flags are necessary but
-not sufficient by themselves; the Stockfish source patch must also avoid the
-normal native-thread search lifecycle.
+**Single-threaded (`st`)** follows the nmrugg `stockfish.js` flags: no
+pthreads, `__EMSCRIPTEN_SINGLE_THREADED__` defined, Asyncify on, UCI bridge
+functions exported explicitly. The flags are not enough alone: the source
+patch also keeps Stockfish off its native-thread search lifecycle.
 
 Each build writes:
 
-- the wasm module, for example
-  `sf_18_full_mt_module.js`/`sf_18_full_mt_module.wasm` for full MT and
-  `sf_18_lite_st_module.js`/`sf_18_lite_st_module.wasm` for lite ST;
-- a browser worker wrapper, for example `sf_18_full_mt.js` or
-  `sf_18_lite_st.js`;
-- `sf_nnue_loader.js`, used by the wrappers to load the external NNUE files.
+- `sf_<version>_<full|lite>_<mt|st>_module.js` and `.wasm`: the module
+- `sf_<version>_<full|lite>_<mt|st>.js`: the browser worker
+- `sf_nnue_loader.js`: loads the external NNUE files for the workers
 
-The compiled module does not include an NNUE. Full and lite still use separate
-compiled modules because the lite build changes Stockfish's default NNUE list
-and disables the second small-net path.
+No NNUE is compiled in. Full and lite are still separate modules, because lite
+changes the default NNUE list and disables the second small-net path.
 
-The SF17/SF18 browser patches skip Stockfish's native startup `load_networks()`
-call. The worker applies the external NNUE buffers before flushing queued UCI
-commands, so loading from the browser's empty native path only adds `uciok`
-latency.
+The SF17 and SF18 patches skip the startup `load_networks()` call, which in a
+browser would only delay `uciok`. The worker applies the NNUE buffers before
+it flushes queued UCI commands. `verify_networks()` still runs, so a failed
+NNUE load shows up in the smoke test and in analysis.
 
-Runtime `verify_networks()` is still kept for normal commands so failed NNUE
-loads remain visible during smoke tests and analysis.
+`stockfish.wasm.js` and `stockfish.wasm` are a separate small fallback for
+SmartMove, not one of the selectable engines.
 
-## Worker Naming
-
-Normal selectable local-analysis workers use:
-
-```text
-sf_<version>_<full|lite>_<mt|st>.js
-sf_<version>_<full|lite>_<mt|st>_module.js
-sf_<version>_<full|lite>_<mt|st>_module.wasm
-```
-
-Use explicit `full`/`lite` names for SF17, SF18, and SF19. That keeps the file
-names aligned with the engine selector and avoids guessing which NNUE profile a
-worker loads.
-
-`stockfish.wasm.js` and `stockfish.wasm` are intentionally separate. They are a
-small fallback for SmartMove, not normal local-analysis engine-selector builds.
-
-## Smoke Test
+## Smoke test
 
 ```bash
 node test-wasm.mjs /tmp/chessceo-stockfish-wasm-output/sf_18_full_mt_module.js \
@@ -116,8 +74,8 @@ node test-wasm.mjs /tmp/chessceo-stockfish-wasm-output/sf_18_full_mt_module.js \
   --nnue-root ~/Stockfish-17
 ```
 
-For the single-threaded browser build, also verify that infinite analysis can
-be stopped:
+For the single-threaded build, `--stop-test` also checks that infinite
+analysis can be stopped:
 
 ```bash
 node test-wasm.mjs /tmp/chessceo-stockfish-wasm-output/sf_18_lite_st_module.js \
@@ -127,11 +85,7 @@ node test-wasm.mjs /tmp/chessceo-stockfish-wasm-output/sf_18_lite_st_module.js \
   --stop-test
 ```
 
-The test imports the ES module in Node, asks it which NNUE files it expects,
-loads those files from the provided roots, runs `uci`, `isready`, and
-`go depth 1`, then waits for `bestmove`. It also prints a compact timing
-summary for import, instantiate, NNUE load, `uciok`, `readyok`, and depth-1
-search latency.
-
-The glue files are based on the GPL-3.0 `lichess-org/stockfish-web` browser
-glue. The compiled Stockfish artifacts are GPL-3.0 Stockfish derivatives.
+The test imports the module in Node, loads the NNUE files it asks for from the
+given roots, runs `uci`, `isready` and `go depth 1`, and waits for `bestmove`.
+It prints timings for import, instantiate, NNUE load, `uciok`, `readyok` and
+the search.

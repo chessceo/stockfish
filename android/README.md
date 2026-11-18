@@ -185,5 +185,3 @@ costs little and runs slightly cooler, while full `nproc` buys the burst peak â€
 which is why staff (opt-in) get it. Lesson for future tests: matching the CPU
 temp isn't enough; deep thermal mass (battery/chassis) carries over, so
 fridge-cool or fully idle-cool before *each* run.
-</content>
-</invoke>
